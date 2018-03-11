@@ -1,71 +1,55 @@
 package main
 
 import (
-	"fmt"
 	"math/rand"
-	"os"
-	"os/exec"
 	"time"
+
+	"github.com/faiface/pixel"
+	"github.com/faiface/pixel/imdraw"
+	"github.com/faiface/pixel/pixelgl"
+	"golang.org/x/image/colornames"
 )
 
+type Cell struct {
+	Row int
+	Col int
+}
+
 type Board struct {
-	Width  int
-	Height int
-	Cells  [][]bool
+	Cells map[Cell]bool
 }
 
-func makeCells(width, height int) [][]bool {
-	cells := make([][]bool, height)
-	for i := range cells {
-		cells[i] = make([]bool, width)
-	}
-	return cells
-}
+var (
+	cellSize = float64(10)
+)
 
-func newBoard(width, height int, percentage float64) Board {
-	cells := makeCells(width, height)
+func newRandomBoard(width, height int, percentage float64) *Board {
+	cells := map[Cell]bool{}
 	seed := rand.NewSource(time.Now().UnixNano())
 	r := rand.New(seed)
 	for i := 0; i < height; i++ {
 		for j := 0; j < width; j++ {
 			if r.Float64() < percentage {
-				cells[i][j] = true
+				cells[Cell{Row: i, Col: j}] = true
 			}
 		}
 	}
-	return Board{
-		Width:  width,
-		Height: height,
-		Cells:  cells,
-	}
-}
-
-func (b *Board) print() {
-	cmd := exec.Command("clear") //Linux example, its tested
-	cmd.Stdout = os.Stdout
-	cmd.Run()
-	for i := 0; i < b.Height; i++ {
-		for j := 0; j < b.Width; j++ {
-			if b.isAlive(i, j) {
-				fmt.Print(" X ")
-			} else {
-				fmt.Print("   ")
-			}
-		}
-		fmt.Print("\n")
+	return &Board{
+		Cells: cells,
 	}
 }
 
 func (b *Board) isAlive(row, col int) bool {
-	if row < 0 || col < 0 || col >= b.Width || row >= b.Height {
-		return false // out of bounds
-	} else {
-		return b.Cells[row][col]
-	}
+	exists, alive := b.Cells[Cell{Row: row, Col: col}]
+	return exists && alive
 }
 
 func (b *Board) makeAlive(row, col int) {
-	b.Cells[row][col] = true
+	b.Cells[Cell{Row: row, Col: col}] = true
+}
+
+func (b *Board) kill(row, col int) {
+	b.Cells[Cell{Row: row, Col: col}] = false
 }
 
 func (b *Board) countNeighbours(row, col int) int {
@@ -84,25 +68,131 @@ func (b *Board) countNeighbours(row, col int) int {
 }
 
 func (b *Board) step() {
-	buffer := makeCells(b.Width, b.Height)
-	for i := 0; i < b.Height; i++ {
-		for j := 0; j < b.Width; j++ {
-			neighbours := b.countNeighbours(i, j)
-			if b.isAlive(i, j) {
-				buffer[i][j] = neighbours == 2 || neighbours == 3
-			} else if !b.isAlive(i, j) {
-				buffer[i][j] = neighbours == 3
+	buffer := map[Cell]bool{}
+	for cell, _ := range b.Cells {
+		for i := -1; i <= 1; i++ {
+			for j := -1; j <= 1; j++ {
+				row := cell.Row + i
+				col := cell.Col + j
+				neighbours := b.countNeighbours(row, col)
+				if b.isAlive(row, col) && (neighbours == 2 || neighbours == 3) {
+					buffer[Cell{Row: row, Col: col}] = true
+				} else if !b.isAlive(row, col) && neighbours == 3 {
+					buffer[Cell{Row: row, Col: col}] = true
+				}
 			}
 		}
 	}
 	b.Cells = buffer
 }
 
-func main() {
-	board := newBoard(80, 80, 0.2)
-	for {
-		board.print()
-		time.Sleep(1 * time.Second)
-		board.step()
+func draw(b *Board, imd *imdraw.IMDraw, win *pixelgl.Window) {
+	imd.Clear()
+	imd.Color = colornames.Black
+	padding := float64(1)
+	for cell, alive := range b.Cells {
+		if alive {
+			x := float64(cell.Col)*cellSize + padding
+			y := win.Bounds().Max.Y - float64(cell.Row)*cellSize - padding
+			imd.Push(pixel.V(x, y))
+			imd.Push(pixel.V(x+cellSize-padding, y-cellSize+padding))
+			imd.Rectangle(0)
+		}
 	}
+}
+
+func posToCell(pos pixel.Vec, screenHeight float64) (row, col int) {
+	col = int((pos.X - 2.0) / cellSize)
+	row = int((screenHeight - pos.Y - 2.0) / cellSize)
+	return
+}
+
+func emptyBoard() *Board {
+	return &Board{Cells: map[Cell]bool{}}
+}
+
+func run() {
+	cfg := pixelgl.WindowConfig{
+		Title:     "Game of life",
+		Bounds:    pixel.R(0, 0, 1024, 768),
+		VSync:     true,
+		Resizable: true,
+	}
+	win, err := pixelgl.NewWindow(cfg)
+	if err != nil {
+		panic(err)
+	}
+	imd := imdraw.New(nil)
+	run := false
+	speed := int64(1)
+	tick := time.Tick(time.Second / time.Duration(speed))
+	board := emptyBoard()
+	for !win.Closed() {
+		if win.JustPressed(pixelgl.MouseButtonLeft) {
+			row, col := posToCell(win.MousePosition(), win.Bounds().Max.Y)
+			if board.isAlive(row, col) {
+				board.kill(row, col)
+			} else {
+				board.makeAlive(row, col)
+			}
+		}
+		// Initialize
+		if win.JustPressed(pixelgl.KeyI) {
+			row, col := posToCell(pixel.Vec{win.Bounds().Max.X, 0}, win.Bounds().Max.Y)
+			board = newRandomBoard(col, row, 0.15)
+		}
+		// Run/stop
+		if win.JustPressed(pixelgl.KeyR) {
+			run = !run
+		}
+		// Step
+		if win.JustPressed(pixelgl.KeyS) {
+			board.step()
+		}
+		// Clear
+		if win.JustPressed(pixelgl.KeyC) {
+			board = emptyBoard()
+		}
+		// Quit
+		if win.JustPressed(pixelgl.KeyQ) {
+			win.SetClosed(true)
+		}
+		// Speed up
+		if win.JustPressed(pixelgl.KeyRightBracket) {
+			speed += 1
+			tick = time.Tick(time.Second / time.Duration(speed))
+		}
+		// Slow down
+		if win.JustPressed(pixelgl.KeyLeftBracket) {
+			// Speed zero is not allowed
+			if speed > 1 {
+				speed -= 1
+				tick = time.Tick(time.Second / time.Duration(speed))
+			}
+		}
+		// Zoom in
+		if win.JustPressed(pixelgl.KeyZ) {
+			cellSize *= 2
+		}
+		// Zoom out
+		if win.JustPressed(pixelgl.KeyX) {
+			cellSize /= 2
+		}
+
+		draw(board, imd, win)
+		win.Clear(colornames.Skyblue)
+		imd.Draw(win)
+		win.Update()
+		select {
+		case <-tick:
+			if run {
+				board.step()
+			}
+		default:
+		}
+	}
+}
+
+func main() {
+	pixelgl.Run(run)
 }

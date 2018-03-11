@@ -1,0 +1,4 @@
+package: github.com/furuholm/gameoflife
+import: 
+- package: github.com/faiface/pixel
+- package: github.com/faiface/pixel/pixelgl
