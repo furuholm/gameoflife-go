@@ -20,7 +20,7 @@ type Board struct {
 }
 
 var (
-	cellSize = float64(10)
+	cellSize = float64(40)
 )
 
 func newRandomBoard(width, height int, percentage float64) *Board {
@@ -88,14 +88,27 @@ func (b *Board) step() {
 
 func draw(b *Board, imd *imdraw.IMDraw, win *pixelgl.Window) {
 	imd.Clear()
-	imd.Color = colornames.Black
 	padding := float64(1)
+	width := win.Bounds().Max.X
+	height := win.Bounds().Max.Y
+	imd.Color = pixel.Alpha(0.4) // colornames.White
+	for x := 0.0; x <= width; x += cellSize {
+		imd.Push(pixel.V(x, 0))
+		imd.Push(pixel.V(x, height))
+		imd.Line(2)
+	}
+	for y := height; y >= 0; y -= cellSize {
+		imd.Push(pixel.V(0, y))
+		imd.Push(pixel.V(width, y))
+		imd.Line(2)
+	}
+	imd.Color = colornames.Black
 	for cell, alive := range b.Cells {
 		if alive {
 			x := float64(cell.Col)*cellSize + padding
-			y := win.Bounds().Max.Y - float64(cell.Row)*cellSize - padding
+			y := height - float64(cell.Row)*cellSize - padding
 			imd.Push(pixel.V(x, y))
-			imd.Push(pixel.V(x+cellSize-padding, y-cellSize+padding))
+			imd.Push(pixel.V(x+cellSize-padding*2, y-cellSize+padding*2))
 			imd.Rectangle(0)
 		}
 	}
